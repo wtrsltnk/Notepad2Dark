@@ -176,6 +176,7 @@ target_link_libraries(Notepad2 PRIVATE
     ole32
     oleaut32
     psapi
+    uxtheme
 )
 
 # ---------------------------------------------------------------------------
@@ -199,3 +200,14 @@ endif()
 # ---------------------------------------------------------------------------
 
 set_target_properties(Notepad2 PROPERTIES OUTPUT_NAME "Notepad2")
+
+# ---------------------------------------------------------------------------
+# Copy Notepad2.ini next to the executable after build
+# ---------------------------------------------------------------------------
+
+add_custom_command(TARGET Notepad2 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/Notepad2.ini"
+        "$<TARGET_FILE_DIR:Notepad2>/Notepad2.ini"
+    COMMENT "Copying Notepad2.ini to output directory"
+)
