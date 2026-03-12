@@ -24,9 +24,11 @@
 #include <shlwapi.h>
 #include <shellapi.h>
 #include <commdlg.h>
+#include <Uxtheme.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <Uxtheme.h>
 #include "scintilla.h"
 #include "scilexer.h"
 #include "notepad2.h"
@@ -315,6 +317,8 @@ int WINAPI WinMain(HINSTANCE hInstance,HINSTANCE hPrevInst,LPSTR lpCmdLine,int n
   //HMODULE hSciLexer;
   WCHAR wchWorkingDirectory[MAX_PATH];
 
+  InitDarkMode();
+
   // Set global variable g_hInstance
   g_hInstance = hInstance;
 
@@ -442,6 +446,8 @@ int WINAPI WinMain(HINSTANCE hInstance,HINSTANCE hPrevInst,LPSTR lpCmdLine,int n
 }
 
 
+HBRUSH hbrDark;
+
 //=============================================================================
 //
 //  InitApplication()
@@ -449,6 +455,7 @@ int WINAPI WinMain(HINSTANCE hInstance,HINSTANCE hPrevInst,LPSTR lpCmdLine,int n
 //
 BOOL InitApplication(HINSTANCE hInstance)
 {
+  hbrDark = CreateSolidBrush(RGB(32, 32, 32));
 
   WNDCLASS   wc;
 
@@ -462,6 +469,7 @@ BOOL InitApplication(HINSTANCE hInstance)
   wc.hbrBackground = (HBRUSH)(COLOR_3DFACE+1);
   wc.lpszMenuName  = MAKEINTRESOURCE(IDR_MAINWND);
   wc.lpszClassName = wchWndClass;
+  wc.hbrBackground = hbrDark;
 
   return RegisterClass(&wc);
 
@@ -755,6 +763,97 @@ HWND InitInstance(HINSTANCE hInstance,LPSTR pszCmdLine,int nCmdShow)
 
 }
 
+// ------------------------------------------------------------
+// Dark menu bar (undocumented UAH messages)
+// ------------------------------------------------------------
+
+#define WM_UAHDRAWMENU 0x0091
+#define WM_UAHDRAWMENUITEM 0x0092
+
+struct UAHMENU {
+  HMENU hmenu;
+  HDC hdc;
+  DWORD dwFlags;
+};
+
+struct UAHMENUITEMMETRICS {
+  union {
+    struct {
+      DWORD cx, cy;
+    } rgsizeBar[2];
+    struct {
+      DWORD cx, cy;
+    } rgsizePopup[4];
+  };
+};
+
+struct UAHMENUPOPUPMETRICS {
+  DWORD rgcx[4];
+  BOOL fUpdateMaxWidths : 2;
+};
+
+struct UAHMENUITEM {
+  int iPosition;
+  struct UAHMENUITEMMETRICS umim;
+  struct UAHMENUPOPUPMETRICS umpm;
+};
+
+struct UAHDRAWMENUITEM {
+  DRAWITEMSTRUCT dis;
+  struct UAHMENU um;
+  struct UAHMENUITEM umi;
+};
+
+static HBRUSH hbrMenuBar;
+static HBRUSH hbrMenuHot;
+
+LRESULT CALLBACK ToolbarSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                     LPARAM lParam, UINT_PTR a, DWORD_PTR b) {
+  if (msg == WM_ERASEBKGND) {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    FillRect((HDC)wParam, &rc, hbrDark);
+    return TRUE;
+  }
+  if (msg == WM_PAINT) {
+    LRESULT res = DefSubclassProc(hwnd, msg, wParam, lParam);
+    HDC hdc = GetDC(hwnd);
+    RECT rc = {0, 0, 32767, 2};
+    FillRect(hdc, &rc, hbrDark);
+    ReleaseDC(hwnd, hdc);
+    return res;
+  }
+  return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+LRESULT CALLBACK StatusBarSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                       LPARAM lParam, UINT_PTR a, DWORD_PTR b) {
+  if (msg == WM_PAINT) {
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd, &ps);
+
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    FillRect(hdc, &rc, hbrDark);
+
+    SetTextColor(hdc, RGB(255, 255, 255));
+    SetBkMode(hdc, TRANSPARENT);
+
+    int nParts = (int)SendMessage(hwnd, SB_GETPARTS, 0, 0);
+    for (int i = 0; i < nParts; i++) {
+      RECT rcPart;
+      SendMessage(hwnd, SB_GETRECT, i, (LPARAM)&rcPart);
+      wchar_t text[256] = {};
+      SendMessage(hwnd, SB_GETTEXT, i, (LPARAM)text);
+      InflateRect(&rcPart, -4, 0); // small left/right padding
+      DrawTextW(hdc, text, -1, &rcPart, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    EndPaint(hwnd, &ps);
+    return 0;
+  }
+  return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
 
 //=============================================================================
 //
@@ -775,10 +874,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
     case WM_MOVE:
     case WM_MOUSEACTIVATE:
     case WM_NCHITTEST:
-    case WM_NCCALCSIZE:
-    case WM_NCPAINT:
     case WM_PAINT:
-    case WM_ERASEBKGND:
     case WM_NCMOUSEMOVE:
     case WM_NCLBUTTONDOWN:
     case WM_WINDOWPOSCHANGING:
@@ -786,8 +882,46 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
       return DefWindowProc(hwnd,umsg,wParam,lParam);
 
     case WM_CREATE:
+      EnableDarkModeForWindow(hwnd);
       return MsgCreate(hwnd,wParam,lParam);
 
+    case WM_ERASEBKGND:
+    {
+      RECT rc;
+      GetClientRect(hwnd, &rc);
+      FillRect((HDC)wParam, &rc, hbrDark);
+      return 1;
+    }
+
+    case WM_NCCALCSIZE:
+    {
+      LRESULT res = DefWindowProc(hwnd, umsg, wParam, lParam);
+      if (wParam == TRUE) {
+        NCCALCSIZE_PARAMS *params = (NCCALCSIZE_PARAMS *)lParam;
+        params->rgrc[0].top -= 1;
+      }
+      return res;
+    }
+
+    case WM_NCPAINT:
+    {
+      LRESULT res = DefWindowProc(hwnd, umsg, wParam, lParam);
+      HDC hdc = GetWindowDC(hwnd);
+      if (hdc) {
+        MENUBARINFO mbi = {sizeof(mbi)};
+        if (GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mbi)) {
+          RECT rcWindow;
+          GetWindowRect(hwnd, &rcWindow);
+          RECT rc = mbi.rcBar;
+          OffsetRect(&rc, -rcWindow.left, -rcWindow.top);
+          rc.top = rc.bottom - 1;
+          rc.bottom = rc.top + 10;
+          FillRect(hdc, &rc, hbrMenuBar);
+        }
+        ReleaseDC(hwnd, hdc);
+      }
+      return res;
+    }
 
     case WM_DESTROY:
     case WM_ENDSESSION:
@@ -1112,6 +1246,46 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
     case WM_NOTIFY:
       return MsgNotify(hwnd,wParam,lParam);
 
+  case WM_UAHDRAWMENU: {
+    struct UAHMENU *pUm = (struct UAHMENU *)lParam;
+    MENUBARINFO mbi = {sizeof(mbi)};
+    GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mbi);
+    RECT rcWindow;
+    GetWindowRect(hwnd, &rcWindow);
+    RECT rc = mbi.rcBar;
+    OffsetRect(&rc, -rcWindow.left, -rcWindow.top);
+    rc.bottom += 5; // cover the separator line drawn below the menu bar
+    FillRect(pUm->hdc, &rc, hbrMenuBar);
+    return TRUE;
+  }
+
+  case WM_UAHDRAWMENUITEM: {
+    struct UAHDRAWMENUITEM *pUdmi = (struct UAHDRAWMENUITEM *)lParam;
+    wchar_t menuString[256] = {};
+    MENUITEMINFO mii = {sizeof(mii), MIIM_STRING};
+    mii.dwTypeData = menuString;
+    mii.cch = 256;
+    GetMenuItemInfoW(pUdmi->um.hmenu, pUdmi->umi.iPosition, TRUE, &mii);
+
+    DWORD dwTextFlags = DT_CENTER | DT_SINGLELINE | DT_VCENTER;
+    HBRUSH hbrItem = hbrMenuBar;
+    COLORREF clrText = RGB(255, 255, 255);
+
+    if (pUdmi->dis.itemState & (ODS_HOTLIGHT | ODS_SELECTED))
+      hbrItem = hbrMenuHot;
+    if (pUdmi->dis.itemState & (ODS_GRAYED | ODS_DISABLED))
+      clrText = RGB(109, 109, 109);
+    if (pUdmi->dis.itemState & ODS_NOACCEL)
+      dwTextFlags |= DT_HIDEPREFIX;
+
+    FillRect(pUdmi->um.hdc, &pUdmi->dis.rcItem, hbrItem);
+    SetTextColor(pUdmi->um.hdc, clrText);
+    SetBkMode(pUdmi->um.hdc, TRANSPARENT);
+    DrawTextW(pUdmi->um.hdc, menuString, mii.cch, &pUdmi->dis.rcItem,
+              dwTextFlags);
+    return TRUE;
+  }
+
 
     case WM_COMMAND:
       return MsgCommand(hwnd,wParam,lParam);
@@ -1284,12 +1458,14 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
 //
 LRESULT MsgCreate(HWND hwnd,WPARAM wParam,LPARAM lParam)
 {
-
   HINSTANCE hInstance = ((LPCREATESTRUCT)lParam)->hInstance;
+
+  hbrMenuBar = CreateSolidBrush(RGB(32, 32, 32));
+  hbrMenuHot = CreateSolidBrush(RGB(65, 65, 65));
 
   // Setup edit control
   hwndEdit = EditCreate(hwnd);
-
+SetWindowTheme(hwndEdit, L"DarkMode_Explorer", NULL);
   // Tabs
   SendMessage(hwndEdit,SCI_SETUSETABS,!bTabsAsSpaces,0);
   SendMessage(hwndEdit,SCI_SETTABINDENTS,bTabIndents,0);
@@ -1447,6 +1623,12 @@ LRESULT MsgCreate(HWND hwnd,WPARAM wParam,LPARAM lParam)
       hwndStatus == NULL || hwndToolbar == NULL || hwndReBar == NULL)
     return(-1);
 
+  SetWindowTheme(hwndStatus, L"DarkMode_Explorer", NULL);
+  SendMessage(hwndStatus, WM_THEMECHANGED, 0, 0);
+
+  SetWindowTheme(hwndToolbar, L"DarkMode_Explorer", NULL);
+  SendMessage(hwndToolbar, WM_THEMECHANGED, 0, 0);
+
   return(0);
 
 }
@@ -1488,6 +1670,8 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
 
   hwndToolbar = CreateWindowEx(0,TOOLBARCLASSNAME,NULL,dwToolbarStyle,
                                0,0,0,0,hwnd,(HMENU)IDC_TOOLBAR,hInstance,NULL);
+  SetWindowTheme(hwndToolbar, L"DarkMode_Explorer", NULL);
+  SetWindowSubclass(hwndToolbar, ToolbarSubclassProc, 0, 0);
 
   SendMessage(hwndToolbar,TB_BUTTONSTRUCTSIZE,(WPARAM)sizeof(TBBUTTON),0);
 
@@ -1598,6 +1782,8 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
     dwStatusbarStyle |= WS_VISIBLE;
 
   hwndStatus = CreateStatusWindow(dwStatusbarStyle,NULL,hwnd,IDC_STATUSBAR);
+  SetWindowTheme(hwndStatus, L"DarkMode_Explorer", NULL);
+  SetWindowSubclass(hwndStatus, StatusBarSubclassProc, 0, 0);
 
   // Create ReBar and add Toolbar
   hwndReBar = CreateWindowEx(WS_EX_TOOLWINDOW,REBARCLASSNAME,NULL,dwReBarStyle,
@@ -1759,6 +1945,8 @@ void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
 
   SendMessage(hwndStatus,SB_SETPARTS,COUNTOF(aWidth),(LPARAM)aWidth);
 
+  SendMessage(hwndToolbar, TB_AUTOSIZE, 0, 0);
+  SendMessage(hwndStatus, WM_SIZE, 0, 0);
   //UpdateStatusbar();
 
 }
@@ -4548,7 +4736,23 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
 LRESULT MsgNotify(HWND hwnd,WPARAM wParam,LPARAM lParam)
 {
 
-  LPNMHDR pnmh = (LPNMHDR)lParam;
+    LPNMHDR pnmh = (LPNMHDR)lParam;
+    if (pnmh->hwndFrom == hwndToolbar && pnmh->code == NM_CUSTOMDRAW) {
+      NMCUSTOMDRAW *pcd = (NMCUSTOMDRAW *)lParam;
+      if (pcd->dwDrawStage == CDDS_PREPAINT) {
+        FillRect(pcd->hdc, &pcd->rc, hbrDark);
+        return CDRF_NOTIFYITEMDRAW | CDRF_NOTIFYPOSTPAINT;
+      }
+      if (pcd->dwDrawStage == CDDS_ITEMPREPAINT) {
+        return CDRF_DODEFAULT;
+      }
+      if (pcd->dwDrawStage == CDDS_POSTPAINT) {
+        RECT rc = pcd->rc;
+        rc.bottom = rc.top + 2;
+        FillRect(pcd->hdc, &rc, hbrDark);
+        return CDRF_DODEFAULT;
+      }
+    }
   struct SCNotification* scn = (struct SCNotification*)lParam;
 
   switch(pnmh->idFrom)

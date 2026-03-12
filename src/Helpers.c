@@ -193,21 +193,65 @@ BOOL IsElevated() {
 //
 //  SetExplorerTheme()
 //
-//BOOL SetExplorerTheme(HWND hwnd)
-//{
-//  FARPROC pfnSetWindowTheme;
-//
-//  if (IsVista()) {
-//    if (hModUxTheme) {
-//      pfnSetWindowTheme = GetProcAddress(hModUxTheme,"SetWindowTheme");
-//
-//      if (pfnSetWindowTheme)
-//        return (S_OK == pfnSetWindowTheme(hwnd,L"Explorer",NULL));
-//    }
-//  }
-//  return FALSE;
-//}
+BOOL SetExplorerTheme(HWND hwnd)
+{
+ FARPROC pfnSetWindowTheme;
 
+ if (IsVista()) {
+   if (hModUxTheme) {
+     pfnSetWindowTheme = GetProcAddress(hModUxTheme,"SetWindowTheme");
+
+     if (pfnSetWindowTheme)
+       return (S_OK == pfnSetWindowTheme(hwnd,L"Dark_Explorer",NULL));
+   }
+ }
+ return FALSE;
+}
+
+#include <commctrl.h>
+#include <dwmapi.h>
+#include <uxtheme.h>
+
+typedef BOOL(WINAPI *AllowDarkModeForWindowProc)(HWND, BOOL);
+typedef BOOL(WINAPI *FlushMenuThemesProc)();
+typedef BOOL(WINAPI *RefreshImmersiveColorPolicyStateProc)();
+typedef BOOL(WINAPI *SetPreferredAppModeProc)(int);
+
+static AllowDarkModeForWindowProc AllowDarkModeForWindowPtr = NULL;
+static FlushMenuThemesProc FlushMenuThemesPtr = NULL;
+static RefreshImmersiveColorPolicyStateProc
+    RefreshImmersiveColorPolicyStatePtr = NULL;
+static SetPreferredAppModeProc SetPreferredAppModePtr = NULL;
+
+void InitDarkMode() {
+    HMODULE hUxTheme = LoadLibraryW(L"uxtheme.dll");
+
+    AllowDarkModeForWindowPtr = (AllowDarkModeForWindowProc)GetProcAddress(
+        hUxTheme, "AllowDarkModeForWindow");
+    FlushMenuThemesPtr =
+        (FlushMenuThemesProc)GetProcAddress(hUxTheme, "FlushMenuThemes");
+    RefreshImmersiveColorPolicyStatePtr =
+        (RefreshImmersiveColorPolicyStateProc)GetProcAddress(
+            hUxTheme, "RefreshImmersiveColorPolicyState");
+    SetPreferredAppModePtr =
+        (SetPreferredAppModeProc)GetProcAddress(hUxTheme, MAKEINTRESOURCEA(135));
+
+    if (SetPreferredAppModePtr)
+        SetPreferredAppModePtr(2); // ForceDark
+    if (RefreshImmersiveColorPolicyStatePtr)
+        RefreshImmersiveColorPolicyStatePtr();
+    if (FlushMenuThemesPtr)
+        FlushMenuThemesPtr();
+}
+
+void EnableDarkModeForWindow(HWND hwnd) {
+    if (AllowDarkModeForWindowPtr)
+        AllowDarkModeForWindowPtr(hwnd, TRUE);
+
+    BOOL dark = TRUE;
+
+    DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
+}
 
 //=============================================================================
 //

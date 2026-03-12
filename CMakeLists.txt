@@ -177,6 +177,7 @@ target_link_libraries(Notepad2 PRIVATE
     oleaut32
     psapi
     uxtheme
+    dwmapi
 )
 
 # ---------------------------------------------------------------------------
