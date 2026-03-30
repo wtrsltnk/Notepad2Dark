@@ -93,6 +93,7 @@ set(NP2_SOURCES
     src/Print.cpp
     src/Styles.c
     src/Notepad2.rc
+    # res/Notepad2.exe.manifest
 )
 
 # ---------------------------------------------------------------------------
@@ -106,6 +107,8 @@ add_executable(Notepad2 WIN32
     ${SCINTILLA_SRC}
     ${SCINTILLA_WIN32}
 )
+
+set_target_properties(Notepad2 PROPERTIES LINK_FLAGS "/MANIFEST:NO")
 
 # ---------------------------------------------------------------------------
 # Include directories
